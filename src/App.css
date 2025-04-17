@@ -24,15 +24,6 @@ body {
   }
 }
 
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
-
-
 @property --gradient-angle {
   syntax: "<angle>";
   initial-value: 0deg;
@@ -107,8 +98,53 @@ body {
   background-color: #2b2b2b;
 }
 
+/*
+.canvas-area canvas {
+  display: block;
+  background-color: #f5f5f5;
+  border-radius: 0.5rem;
+}
+*/
+
 .canvas-area {
+  position: relative;
+  display: inline-block;
+  width: 512px;
+  height: 512px;
   flex-shrink: 0;
+  z-index: 0;
+}
+
+.canvas-area canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  z-index: 3;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0);
+}
+
+.canvas-area.glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 0.225rem;
+  background: linear-gradient(var(--gradient-angle), #3f51b5, #9c27b0, #f44336, #ff9800);
+  animation: rotation 6s linear infinite;
+  z-index: 1;
+  transform: translate(4px, 4px);
+}
+
+.canvas-area.glow::after {
+  content: "";
+  position: absolute;
+  inset: 0.25rem;
+  filter: blur(0.5rem);
+  background: #f5f5f5;
+  border-radius: 0.5rem;
+  z-index: 2;
+  transform: translate(4px, 4px);
 }
 
 .prompt-area {

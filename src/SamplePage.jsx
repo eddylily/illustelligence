@@ -11,6 +11,9 @@ export default function SamplePage() {
   ]);
   const [drawingPromptId, setDrawingPromptId] = useState(null);
   const [boxes, setBoxes] = useState([]);
+  const [generatedImages, setGeneratedImages] = useState({});
+  const [isGenerating, setIsGenerating] = useState(false);
+
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPos, setStartPos] = useState(null);
@@ -26,7 +29,7 @@ export default function SamplePage() {
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "white";
+    ctx.fillStyle = "rgba(255, 255, 255, 0)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     renderBoxes(ctx);
   }, [boxes, tempBox]);
@@ -72,7 +75,7 @@ export default function SamplePage() {
 
   const renderBoxes = (ctx) => {
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    ctx.fillStyle = "white";
+    ctx.fillStyle = "rgba(255, 255, 255, 0)";
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
     boxes.forEach((box) => {
@@ -86,21 +89,110 @@ export default function SamplePage() {
     }
   };
 
+  const handleGenerate = async () => {
+    // If there are any prompts
+    const filledPrompts = prompts.filter(p => p.text.trim() !== "");
+  
+    // If there's no prompt
+    if (filledPrompts.length === 0) {
+      alert("하나 이상의 프롬프트를 입력하셔야 합니다.");
+      return;
+    }
+  
+    // Find prompts without square
+    const missingBoxes = filledPrompts.filter(p => {
+      return !boxes.some(b => b.id === p.id);
+    });
+  
+    if (missingBoxes.length > 0) {
+      alert("입력하신 모든 프롬프트에 대하여 영역을 지정해 주세요.\nDraw 버튼을 누르면 영역을 지정하실 수 있습니다.");
+      return;
+    }
+  
+    // Satisfied
+    const validBoxes = boxes.filter(box => {
+      const prompt = prompts.find(p => p.id === box.id);
+      return prompt && prompt.text.trim() !== "";
+    });
+  
+    setIsGenerating(true);
+    setGeneratedImages({});
+  
+    for (const box of validBoxes) {
+      const promptText = prompts.find(p => p.id === box.id)?.text || "";
+  
+      try {
+        const res = await fetch("http://127.0.0.1:7860/sdapi/v1/txt2img", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: promptText,
+            width: box.width,
+            height: box.height,
+            steps: 30
+          })
+        });
+  
+        const data = await res.json();
+        const imageUrl = `data:image/png;base64,${data.images[0]}`;
+  
+        setGeneratedImages(prev => ({
+          ...prev,
+          [box.id]: imageUrl
+        }));
+      } catch (error) {
+        console.error("이미지 생성 실패: ", error);
+      }
+    }
+  
+    setIsGenerating(false);
+  };
+
+  /*
+  const handleGenerateImage = () => {
+    const targetBox = boxes[0];
+    const promptText = prompts.find(p => p.id === targetBox.id)?.text || "";
+  
+    fetch("http://127.0.0.1:7860/sdapi/v1/txt2img", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        prompt: promptText,
+        width: 512,
+        height: 512,
+        steps: 20
+      })
+    })
+      .then(res => res.json())
+      .then(data => {
+        const base64Image = data.images[0];
+        const imageUrl = `data:image/png;base64,${base64Image}`;
+        const img = new Image();
+        img.src = imageUrl;
+        img.style.width = "256px";
+        img.style.marginTop = "1rem";
+        document.body.appendChild(img);
+      });
+  };
+  */
+
   return (
     <>
     <div className="layout-container" style={{ backgroundColor: "#f5f5f5" }}>
       {/* Canvas */}
-      <div className="canvas-area">
-      <canvas
-        ref={canvasRef}
-        width={512}
-        height={512}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseMove={handleMouseMove}
-        className="border shadow rounded"
-        style={{ border: "4px solid #2b2b2b", marginBottom: "0.5rem" }}
-      />
+      <div className={`canvas-area ${isGenerating ? "glow" : "glow"}`}>
+          <canvas
+            ref={canvasRef}
+            width={512}
+            height={512}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
+            onMouseMove={handleMouseMove}
+            className="border shadow rounded"
+            style={{ border: "4px solid #2b2b2b" }}
+          />
       </div>
 
       {/* Prompt Boxs */}
@@ -116,12 +208,19 @@ export default function SamplePage() {
             <div
               key={p.id}
               className={`prompt-box flex flex-col transition-all ${isSelected ? "active" : ""}`}
-              style={{ backgroundColor: "transparent", color: "#2b2b2b", width: "26rem", padding: "0.5rem", marginBottom: "0.75rem" }}
+              style={{ backgroundColor: "transparent", color: "#2b2b2b", 
+                width: "26rem", padding: "0.5rem", 
+                marginBottom: "0.75rem"
+              }}
             > {/* Edge of the boxes */}
               {/* Text Input */}
               <input
                 className="items-center text-lg rounded-full border-none outline-none"
-                style={{ backgroundColor: colorpastel, color: "#2b2b2b", fontSize: "0.75rem", width: "16rem", height: "1.33rem", marginTop: "0.33rem", marginBottom: "0.33rem" }}
+                style={{ backgroundColor: colorpastel, color: "#2b2b2b", 
+                  fontSize: "0.75rem", 
+                  width: "16rem", height: "1.33rem", 
+                  marginTop: "0.33rem", marginBottom: "0.33rem"
+                }}
                 placeholder={`Prompt ${p.id}`}
                 value={p.text}
                 onChange={e => handlePromptChange(p.id, e.target.value)}
@@ -129,7 +228,12 @@ export default function SamplePage() {
               {/* Draw Button */}
               <button
                 className={`self-start items-center text-sm rounded-full transition-colors duration-200 text-white border-none outline-none`}
-                style={{ backgroundColor: color, color: "#f5f5f5", textAlign: "center", marginLeft: "1em", marginTop: "0.2rem", marginBottom: "0.2rem", width: "5em", height: "2.5rem" }}
+                style={{ 
+                  backgroundColor: color, color: "#f5f5f5", 
+                  textAlign: "center", 
+                  marginLeft: "1em", marginTop: "0.2rem", marginBottom: "0.2rem", 
+                  width: "5em", height: "2.5rem"
+                }}
                 onClick={() => setDrawingPromptId(p.id)}
               >
               Draw
@@ -140,13 +244,18 @@ export default function SamplePage() {
 
         <button
           className="items-center mt-4 bg-white text-black px-4 py-2 rounded shadow hover:bg-gray-200"
-          style={{ backgroundColor: "#2b2b2b", color: "#f5f5f5", margin: "0 auto", marginTop: "1.5rem", width: "13rem", height: "3rem" }}
-          onClick={() => alert("이미지 생성 기능이 아직 구현되지 않았습니다.")}
+          style={{ 
+            backgroundColor: "#2b2b2b", color: "#f5f5f5", 
+            margin: "0 auto", marginTop: "1.5rem", 
+            width: "13rem", height: "3rem"
+          }}
+          onClick={handleGenerate}
         >
-          이미지 생성하기
+          Create Image
         </button>
       </div>
     </div>
+
     <div style={{ width: "100%", marginTop: "0.5rem", marginLeft: "2.5rem", textAlign: "left" }}>
       <p style={{ color: "#2b2b2b", fontSize: "1rem" }}>
         원하는 사물을 텍스트로 입력한 뒤, Draw 버튼을 눌러 캔버스에 드래그하여 위치와 크기를 지정하세요.

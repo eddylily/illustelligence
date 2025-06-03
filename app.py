@@ -7,8 +7,9 @@ import torch
 import json
 import cv2
 import shutil
+import uuid
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from segment_anything import sam_model_registry, SamPredictor
 from psd_tools.api.psd_image import PSDImage
 from psd_tools.constants import Compression
@@ -126,6 +127,7 @@ def export_psd():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         layer_dir = os.path.join("outputs", "layers", timestamp)
         os.makedirs(layer_dir, exist_ok=True)
+        saved_filenames = []
 
         # 박스별로 PNG 마스크 생성
         for i, (phrase, box) in enumerate(zip(phrases, boxes)):
@@ -152,9 +154,10 @@ def export_psd():
             filename = f"{i+1:02d}_{phrase.replace(' ', '_')}.png"
             layer_path = os.path.join(layer_dir, filename)
             pil_img.save(layer_path)
+            saved_filenames.append(filename)
         
         return jsonify({
-            "layer_dir": layer_dir
+            "layer_dir": layer_dir, "filenames": saved_filenames
         }), 200
 
     except Exception as e:
@@ -164,61 +167,46 @@ def export_psd():
 @app.route("/inpaint", methods=["POST"])
 def inpaint_layers():
     try:
-        data = request.json
-        layer_dir = data.get("layerDir")
+        layer_dir = request.form.get("layerDir")
+        filename_origin = json.loads(request.form.get("filenames"))
+        mask_file = request.files.getlist("masks")
 
-        if not layer_dir or not os.path.exists(layer_dir):
-            return jsonify({"error": "Layer directory not found"}), 400
-
-        # 준비
-        png_files = sorted(f for f in os.listdir(layer_dir) if f.endswith(".png"))
+        png_files = sorted(os.listdir(layer_dir))
         if not png_files:
-            return jsonify({"error": "No PNG files found"}), 400
+            return jsonify({"error": "No valid PNG layers found."}), 400
+        
+        for fname, mfile in zip(filename_origin, mask_file):
+            image_path = os.path.join(layer_dir, fname)
 
-        output_dir = os.path.join(layer_dir, "lama_fixed")
-        os.makedirs(output_dir, exist_ok=True)
+            image = Image.open(image_path).convert("RGB")
 
-        # 전체 이미지 로드
-        all_images = {f: load_image(os.path.join(layer_dir, f)) for f in png_files}
-        all_alphas = {f: extract_alpha_mask(img) for f, img in all_images.items()}
+            tmp_maskpath = os.path.join("output/masks", f"{uuid.uuid4()}.jpg")
+            os.makedirs("output/masks", exist_ok=True)
+            mfile.save(tmp_maskpath)
+            mask = Image.open(tmp_maskpath)
 
-        for filename in png_files:
-            target_img = all_images[filename]
-            target_alpha = all_alphas[filename]
+            if mask.mode == 'RGBA':
+                alpha = mask.split()[-1]
+                mask = ImageOps.grayscale(alpha)
+            else:
+                mask = mask.convert("L")
 
-            # 나머지 알파 채널만
-            other_alphas = [alpha for f, alpha in all_alphas.items() if f != filename]
-            if not other_alphas:
-                print(f"⏭️ Skipping {filename}: no others")
-                continue
+            image_np = np.array(image)
+            mask_np = np.array(mask)
+            inpainted_np = lama_model(image_np, mask=mask_np, config=lama_config).astype(np.uint8)
+            inpainted = Image.fromarray(inpainted_np)
 
-            mask = generate_inpaint_mask(target_alpha, np.stack(other_alphas, axis=0))
+            filename = fname.replace("pre_", "lama_", 1)
 
-            rgb = target_img[:, :, :3]
-            result_np = lama_model(
-                image=rgb,
-                mask=mask,
-                config=lama_config
-            )
+            output_path = os.path.join(layer_dir, filename)
+            inpainted.save(output_path)
+            print(f"{filename} Masked!")
 
-            # 알파 채널 보존 + 마스크 영역 보완
-            final_alpha = np.where(mask > 0, 255, target_alpha)
-            result_pil = Image.fromarray(result_np.astype(np.uint8))
-            result_pil.putalpha(Image.fromarray(final_alpha.astype(np.uint8)))
-
-            output_path = os.path.join(output_dir, filename)
-            result_pil.save(output_path)
-            print(f"✅ Inpainted {filename} saved to {output_path}")
-
-        return jsonify({
-            "message": "All layers inpainted successfully.",
-            "output_dir": output_dir,
-            "files": os.listdir(output_dir)
-        })
+        return jsonify({ "output": layer_dir })
 
     except Exception as e:
         print("[INPAINT ERROR]", str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify({ "error": str(e) }), 500
 
 @app.route("/mergepsd", methods=["POST"])
 def merge_psd():
@@ -229,8 +217,9 @@ def merge_psd():
 
         if not layer_dir or not os.path.exists(layer_dir):
             return jsonify({"error": "Layer directory not found"}), 400
-
+        
         png_files = sorted(os.listdir(layer_dir))
+
         if not png_files:
             return jsonify({"error": "No valid PNG layers found."}), 400
 
@@ -246,7 +235,7 @@ def merge_psd():
             layer_name = os.path.splitext(file)[0]
             pixel_layer = PixelLayer.frompil(pil_image, psd, layer_name, top=0, left=0)
             psd.append(pixel_layer)
-            print(f"✅ Append Complete!")
+            print(f"Append Complete!")
         
         psd_output_dir = "outputs/psd"
         os.makedirs(psd_output_dir, exist_ok=True)
@@ -254,7 +243,7 @@ def merge_psd():
         psd_path = os.path.join(psd_output_dir, psd_filename)
         psd.save(psd_path)
 
-        print(f"✅ Merged PSD saved: {psd_path}")
+        print(f"Merged PSD saved: {psd_path}")
         return send_file(psd_path, mimetype="application/octet-stream")
 
     except Exception as e:

@@ -23,11 +23,19 @@ export default function SamplePage() {
   const [isCreated, setIsCreated] = useState(false);
   const [imagePath, setImagePath] = useState(null);
   const [layerDir, setLayerDir] = useState(null);
+  const [pngFilename, setPngFilename] = useState([]);
+
+  const maskCanvasRef = useRef(null);
+  const [isPsdGenerating, setIsPsdGenerating] = useState(false);
+  const [isMaskStage, setIsMaskStage] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [masks, setMasks] = useState({});
+  const [isPsdEnd, setIsPsdEnd] = useState(false);
 
   const drawBoxes = (ctx) => {
     // fill the background
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    ctx.fillStyle = "rgba(255, 255, 255, 0)";
+    ctx.fillStyle = "transparent";
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
     // draw ref boxes for gligen
@@ -167,10 +175,14 @@ export default function SamplePage() {
           const selectedColor = Object.entries(wordSelections).find(([key, set]) => set.has(idx));
           return (
             <span
+              disabled={isGenerating || isMaskStage || isPsdGenerating}
               key={idx}
               onClick={() => handleWordClick(idx)}
               style={{
-                backgroundColor: selectedColor ? COLORS[parseInt(selectedColor[0])] : "transparent",
+                backgroundColor: selectedColor 
+                  ? ((!isMaskStage || (isMaskStage && wordSelections[currentIndex]?.has(idx))) ? COLORS[parseInt(selectedColor[0])] 
+                    : "#9e9e9e") 
+                  : "transparent",
                 color: "#ffffff",
                 fontSize: "18px",
                 padding: "2px 4px",
@@ -222,6 +234,7 @@ export default function SamplePage() {
     try {
       setIsGenerating(true);
       setImageUrl(null);
+      setCurrentIndex(0);
 
       const res = await fetch("http://localhost:5001/generate", {
         method: "POST",
@@ -244,11 +257,13 @@ export default function SamplePage() {
     }
   };
   
-  const handleExportPSD = async () => {
+  const handleExportPNG = async () => {
     if (!isCreated || boxes.length === 0) {
       alert("프롬프트 또는 캔버스 영역에 변동이 생겼습니다!");
       return;
     }
+
+    // setIsPsdGenerating(true);
 
     // wordSelections → phrases
     const words = confirmedPrompt.split(" ");
@@ -286,33 +301,82 @@ export default function SamplePage() {
       });
 
       const exportResult = await exportRes.json();
-      if (!exportRes.ok) throw new Error("PNG export step failed.");
+      if (!exportRes.ok) {
+        const err = await exportRes.json();
+        throw new Error("PNG export step failed.");
+      }
 
       const layerDirValue = exportResult.layer_dir;
+      const filenameValue = exportResult.filenames;
       setLayerDir(layerDirValue);
-      console.log("✅ Rough PNG Layer saved at: ", layerDirValue);
+      setPngFilename(filenameValue);
+      handleExportPSD();
+      console.log("PNG export successful!");
+    } catch (err) {
+      setIsPsdGenerating(false);
+      console.error("PNG 추출 실패:", err);
+      alert("PNG 파일 추출 중 오류가 발생했습니다.");
+    }
+  };
 
-      /*
-      // 2. LaMa 보강
+  /*
+  useEffect(() => {
+    if (layerDir && pngFilename) {
+      setCurrentIndex(0);
+      setIsMaskStage(true);
+      console.log("layerDir: ", layerDir);
+      console.log("currentIndex: ", currentIndex);
+      console.log("pngFilename: ", pngFilename);
+      console.log("src =  ", pngFilename[currentIndex]);
+      console.log(`http://localhost:5001/${layerDir}/${pngFilename[currentIndex]}`);
+    }
+  }, [layerDir, pngFilename]);
+
+  useEffect(() => {
+    if (masks & pngFilename && Object.keys(masks).length === pngFilename.length) {
+      handleExportLama();
+    }
+  }, [masks, pngFilename]);
+  */
+
+  /*
+  const handleExportLama = async () => {
+    try {
+      const formData = new FormData();
+      formData.append("layerDir", layerDir);
+      formData.append("filenames", JSON.stringify(pngFilename));
+      Object.entries(masks).forEach(([index, file]) => {
+        formData.append("masks", file);
+      });
+
+      // get image list from backends
       const lamaRes = await fetch("http://localhost:5001/inpaint", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ layerDir: layerDirValue })
+        body: formData
       });
 
       if (!lamaRes.ok) {
         const err = await lamaRes.json();
-        throw new Error(err.error || "LaMa enhancement step failed.");
+        throw new Error("LaMa step failed.");
       }
-      const lamaDirValue = lamaRes.output_dir;
-      console.log("✅ Enhanced PNG Layer saved at: ", lamaDirValue);
-      */
 
+      console.log("LaMa inpainting successful!");
+      handleExportPSD();
+    } catch (err) {
+      setIsPsdGenerating(false);
+      console.error("LaMa 오류:", err);
+      alert("LaMa 보간 중 오류가 발생했습니다.");
+    }
+  };
+  */
+
+  const handleExportPSD = async () => {
+    try {
       // 3. PSD 병합 요청
       const mergeRes = await fetch("http://localhost:5001/mergepsd", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ layerDir: layerDirValue }),
+        body: JSON.stringify({ layer_dir: layerDir }),
       });
 
       if (!mergeRes.ok) {
@@ -322,7 +386,10 @@ export default function SamplePage() {
 
       const blob = await mergeRes.blob();
       const downloadUrl = URL.createObjectURL(blob);
-      console.log("✅ PSD created successfully!");
+      console.log("PSD created successfully!");
+
+      setIsMaskStage(false);
+      setIsPsdEnd(true);
 
       // 4. 다운로드 트리거
       const a = document.createElement("a");
@@ -331,11 +398,102 @@ export default function SamplePage() {
       a.click();
       URL.revokeObjectURL(downloadUrl);
 
+      setIsPsdGenerating(false);
       alert("PSD 파일이 성공적으로 생성되었습니다!");
     } catch (err) {
-      console.error("❌ PSD 생성 실패:", err);
+      setIsPsdGenerating(false);
+      console.error("PSD 생성 실패:", err);
       alert("PSD 파일 생성 중 오류가 발생했습니다.");
     }
+  };
+
+  /*
+  const isLamaDrawing = useRef(false);
+
+  const handleLamaDown = (e) => {
+    isLamaDrawing.current = true;
+    const ctx = maskCanvasRef.current.getContext("2d");
+    ctx.beginPath();
+    ctx.moveTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+  };
+
+  const handleLamaMove = (e) => {
+    if (!isLamaDrawing.current) return;
+    const ctx = maskCanvasRef.current.getContext("2d");
+    ctx.lineTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 18;
+    ctx.stroke();
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 16;
+    ctx.stroke();
+  };
+
+  const handleLamaUp = () => {
+    isLamaDrawing.current = false;
+  };
+
+  const handleLamaNext = async () => {
+    const maskCanvas = maskCanvasRef.current;
+
+    maskCanvas.toBlob((blob) => {
+      const file = new File([blob], `mask_${currentIndex}.png`, { type: "image/png" });
+
+      setMasks((prev) => ({
+        ...prev,
+        [currentIndex]: file,
+      }));
+
+      if (currentIndex < pngFilename.length - 1) {
+        setCurrentIndex(currentIndex + 1);
+        clearMaskCanvas();
+      } else {
+        setCurrentIndex(0);
+      }
+    }, "image/png");
+  };
+
+  const clearCanvas = () => {
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  };
+
+  const clearMaskCanvas = () => {
+    const maskCanvas = maskCanvasRef.current;
+    const ctx = maskCanvasRef.current.getContext("2d", { alpha: true });
+    ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+    ctx.fillRect(0, 0,  maskCanvas.width, maskCanvas.height);
+  };
+  */
+
+  const handleDemoClick = () => {
+    const demoPrompt = "A boy with a red balloon next to a brown Pomeranian";
+    // const demoImageUrl = "result_20250603_demo.png";
+    // const demoImagePath = "outputs/result_20250603_demo.png"
+
+    const demoBoxes = [
+      { x: 64, y: 128, width: 160, height: 320, index: 0 },   // "A boy"
+      { x: 160, y: 64, width: 96, height: 160, index: 1 },  // "a red balloon"
+      { x: 256, y: 256, width: 216, height: 160, index: 2 }       // "a brown Pomeranian"
+    ];
+
+    const demoWordSelections = {
+      0: new Set([0, 1]),
+      1: new Set([3, 4, 5]),
+      2: new Set([8, 9, 10])
+    };
+
+    setPrompt(demoPrompt);
+    setConfirmedPrompt(demoPrompt);
+    setWordSelections(demoWordSelections);
+    setBoxes(demoBoxes);
+
+    // setImageUrl(demoImageUrl);
+    // setImagePath(demoImagePath);
+
+    // setIsCreated(true);
+    // setIsGenerating(false);
   };
 
   //
@@ -347,8 +505,14 @@ export default function SamplePage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
     <header>
-      <img src="src/illustelligence.png" style={{ height: "25%", width: "25%", textAlign: "center", marginTop: "48px" }} />
-      <div style={{ margin: "-24px 24px 16px 0" }}>
+      <img 
+        src="src/illustelligence.png"
+        onClick={handleDemoClick}
+        style={{ height: "25%", width: "25%", textAlign: "center", marginLeft: "48px", marginTop: "48px"
+
+        }}
+      />
+      <div style={{ margin: "-24px 24px 16px 48px" }}>
         <span style={{ fontWeight: "bold", fontSize: "16px", color: "#2b2b2b" }}>한양대학교 ERICA 인공지능학과　박 유 상</span>
       </div>
     </header>
@@ -371,11 +535,11 @@ export default function SamplePage() {
             }}
           />
           <button 
-            disabled={isGenerating}
+            disabled={isGenerating || isMaskStage || isPsdGenerating}
             onClick={handleConfirm} 
             style={{ 
               margin: "0 auto", marginBottom: "8px",
-              background: isGenerating ? "#9e9e9e" : "linear-gradient(to bottom right, #04b2d9 25%, #033e8c)",
+              background: (isGenerating || isMaskStage || isPsdGenerating) ? "#9e9e9e" : "linear-gradient(to bottom right, #04b2d9 25%, #033e8c)",
               fontWeight: "bold", borderRadius: "16px"
             }}
           >
@@ -389,11 +553,11 @@ export default function SamplePage() {
         <div style={{ display: "flex", gap: "2px", margin: "12px 6px" }}>
           {COLORS.map((color, i) => (
             <button
-              disabled={isGenerating}
+              disabled={isGenerating || isMaskStage || isPsdGenerating}
               key={i}
               onClick={() => setActiveIndex(i)}
               style={{ 
-                backgroundColor: isGenerating ? "#9e9e9e" : color,
+                backgroundColor: (isGenerating || isMaskStage || isPsdGenerating) ? "#9e9e9e" : color,
                 width: "48px",
                 height: activeIndex === i ? "64px" : "48px",
                 borderRadius: "16px",
@@ -413,7 +577,7 @@ export default function SamplePage() {
 
         <div>
           <button
-            disabled={!confirmedPrompt || isGenerating}
+            disabled={!confirmedPrompt || isGenerating || isMaskStage || isPsdGenerating}
             onClick={handleGenerateImage}
             style={{
               marginTop: "16px",
@@ -422,15 +586,15 @@ export default function SamplePage() {
               width: "160px",
               fontSize: "18px",
               borderRadius: "16px",
-              background: (!confirmedPrompt || isGenerating) ? "#9e9e9e" : "linear-gradient(to bottom right, #04b2d9 25%, #033e8c)",
+              background: (!confirmedPrompt || isGenerating || isMaskStage || isPsdGenerating) ? "#9e9e9e" : "linear-gradient(to bottom right, #04b2d9 25%, #033e8c)",
               color: "white",
             }}
           >
             {isGenerating ? "Generating..." : "Create Image"}
           </button>
           <button
-            disabled={!isCreated || isGenerating}
-            onClick={handleExportPSD}
+            disabled={!isCreated || isGenerating || isMaskStage || isPsdGenerating}
+            onClick={handleExportPNG}
             style={{
               marginTop: "16px",
               marginLeft: "8px",
@@ -438,15 +602,15 @@ export default function SamplePage() {
               width: "160px",
               fontSize: "18px",
               borderRadius: "16px",
-              background: (!isCreated || isGenerating) ? "#9e9e9e" : "linear-gradient(to bottom right, #04b2d9 25%, #033e8c)",
+              background: (!isCreated || isGenerating || isMaskStage || isPsdGenerating) ? "#9e9e9e" : "linear-gradient(to bottom right, #04b2d9 25%, #033e8c)",
               color: "white",
             }}
           >
-            Save as PSD
+            {isPsdGenerating ? "Wait..." : "Save as PSD"}
           </button>
         </div>
       </div>
-      <div className={`canvas-area ${isGenerating ? "glow" : ""}`}>
+      <div className={`canvas-area ${isGenerating ? "glow" : ""}` } style={{ position: "relative", width: "512px", height: "512px" }}>
         <canvas
           disabled={isGenerating}
           ref={canvasRef}
@@ -455,20 +619,70 @@ export default function SamplePage() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          style={{ border: "4px solid #2b2b2b" }}
+          style={{ position: "absolute", border: "4px solid #2b2b2b" }}
         />
-        {imageUrl && (
+        {isMaskStage && (
+          <canvas
+            disabled={isGenerating}
+            ref={maskCanvasRef}
+            width={512}
+            height={512}
+            onMouseDown={handleLamaDown}
+            onMouseMove={handleLamaMove}
+            onMouseUp={handleLamaUp}
+            style={{ position: "absolute", zIndex: 5, border: "4px solid #2b2b2b" }}
+          />
+        )}
+        {imageUrl && !isMaskStage ? (
           <img src={imageUrl} alt="Generated"
           style={{
             position: "absolute",
             top: 0, left: 0,
             width: "512px", height: "512px",
-            zIndex: 2, pointerEvents: "none"
+            zIndex: 1, pointerEvents: "none"
           }}
           />
-        )}
+        ) : (isMaskStage && pngFilename && (
+          <img src={`http://localhost:5001/${layerDir}/${pngFilename[currentIndex]}`} alt="layer"
+          style={{
+            position: "absolute",
+            top: 0, left: 0,
+            width: "512px", height: "512px",
+            zIndex: 4, pointerEvents: "none"
+          }}
+          />
+          ))
+        }
       </div>
-    </div>
+      </div>
+      {isPsdGenerating && (
+        <div style={{ textAlign: "right", marginTop: "-12px", marginRight: "96px" }}>
+          <button
+            disabled={!isMaskStage}
+            onClick={clearMaskCanvas} 
+            style={{ 
+              margin: "0 auto", marginBottom: "8px", padding: "0",
+              width: "48px", height: "48px",
+              background: !isMaskStage ? "#9e9e9e" : "linear-gradient(to bottom right, #04b2d9 25%, #033e8c)",
+              fontWeight: "bold", fontSize: "24px", borderRadius: "16px"
+            }}
+          >
+            ⌫
+          </button>
+          <button
+            disabled={!isMaskStage}
+            onClick={currentIndex < pngFilename.length - 1 ? handleLamaNext : handleExportLama} 
+            style={{ 
+              margin: "0 0 8px 12px", padding: "0",
+              width: "64px", height: "48px",
+              background: !isMaskStage ? "#9e9e9e" : "linear-gradient(to bottom right, #04b2d9 25%, #033e8c)",
+              fontWeight: "bold", fontSize: "24px", borderRadius: "16px"
+            }}
+          >
+            ✓
+          </button>
+        </div>
+      )}
     </div>
   );
 }

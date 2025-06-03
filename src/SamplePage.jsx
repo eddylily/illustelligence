@@ -338,6 +338,27 @@ export default function SamplePage() {
     }
   };
 
+  const handleDemoClick = () => {
+    const demoPrompt = "A boy with a red balloon next to a brown Pomeranian";
+
+    const demoBoxes = [
+      { x: 64, y: 128, width: 160, height: 320, index: 0 },   // "A boy"
+      { x: 160, y: 64, width: 96, height: 160, index: 1 },  // "a red balloon"
+      { x: 256, y: 256, width: 216, height: 160, index: 2 }       // "a brown Pomeranian"
+    ];
+
+    const demoWordSelections = {
+      0: new Set([0, 1]),
+      1: new Set([3, 4, 5]),
+      2: new Set([8, 9, 10])
+    };
+
+    setPrompt(demoPrompt);
+    setConfirmedPrompt(demoPrompt);
+    setWordSelections(demoWordSelections);
+    setBoxes(demoBoxes);
+  };
+
   //
   //
   // WebUI Part
@@ -347,7 +368,9 @@ export default function SamplePage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
     <header>
-      <img src="src/illustelligence.png" style={{ height: "25%", width: "25%", textAlign: "center", marginTop: "48px" }} />
+      <img src="src/illustelligence.png" 
+        onClick={handleDemoClick}
+        style={{ height: "25%", width: "25%", textAlign: "center", marginTop: "48px" }} />
       <div style={{ margin: "-24px 24px 16px 0" }}>
         <span style={{ fontWeight: "bold", fontSize: "16px", color: "#2b2b2b" }}>한양대학교 ERICA 인공지능학과　박 유 상</span>
       </div>
